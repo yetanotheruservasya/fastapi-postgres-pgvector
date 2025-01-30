@@ -47,15 +47,15 @@ app = FastAPI()
 # Function to compute embeddings
 def get_embedding(text):
     openai.api_key = os.getenv("OPENAI_API_KEY")
-    response = openai.embeddings.create(model="text-embedding-ada-002", input=text)
-    return response["data"][0]["embedding"]
+    response = openai.embeddings.create(model="text-embedding-ada-002", input=[text])
+    return response.data[0].embedding 
 
 # Generate entity description using GPT-4o
 def generate_description(entity_text):
     openai.api_key = os.getenv("OPENAI_API_KEY")
     prompt = f"Generate a short description for the entity following context: {entity_text}"
     response = openai.chat.completions.create(
-        model="gpt-4",
+        model="gpt-4o",
         messages=[
             {"role": "system", "content": "You are an AI assistant that summarizes company information."},
             {"role": "user", "content": prompt}
@@ -126,6 +126,33 @@ def store_data(company: CompanyData, current_user: dict = Depends(get_current_us
     cur.close()
     conn.close()
     return {"message": "Data stored successfully"}
+
+# Обработчик для нормализации данных
+@app.post("/normalize/{company_id}")
+def normalize_data(company_id: str):
+    conn = psycopg2.connect(DATABASE_URL)
+    cur = conn.cursor()
+
+    cur.execute("SELECT data FROM raw_data WHERE company_id = %s", (company_id,))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Company not found")
+
+    data = row[0]
+    name = data.get("name")
+    industry = data.get("industry")
+    description = data.get("description", "")
+
+    vector = get_embedding(description)
+
+    cur.execute(
+        "INSERT INTO companies (name, industry, description, vector) VALUES (%s, %s, %s, %s)",
+        (name, industry, description, vector)
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+    return {"message": "Data normalized successfully"}
 
 # Vector search (protected)
 @app.get("/search")
