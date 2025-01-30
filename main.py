@@ -5,6 +5,7 @@ import psycopg2
 import openai
 import os
 import json
+import numpy as np
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from datetime import datetime, timedelta
@@ -158,10 +159,11 @@ def normalize_data(company_id: str):
 @app.get("/search")
 def search_companies(query: str, current_user: dict = Depends(get_current_user)):
     vector = get_embedding(query)
+    vector = np.array(vector, dtype=np.float32).tolist()  # Преобразуем в список float32
 
     conn = psycopg2.connect(DATABASE_URL)
     cur = conn.cursor()
-    cur.execute("SELECT * FROM companies ORDER BY vector <-> %s LIMIT 5", (vector,))
+    cur.execute("SELECT * FROM companies ORDER BY vector <-> %s::vector LIMIT 5", (json.dumps(vector),))
     column_names = [desc[0] for desc in cur.description]
     results = cur.fetchall()
     cur.close()
@@ -174,6 +176,6 @@ def search_companies(query: str, current_user: dict = Depends(get_current_user))
         entity_data_text = json.dumps(entity_data, indent=2)
         enhanced_description = generate_description(entity_data_text)
         entity_data["enhanced_description"] = enhanced_description
-        search_results.append(entity_data["enhanced_description"])
-    
+        search_results.append(entity_data)
+
     return {"results": search_results}
