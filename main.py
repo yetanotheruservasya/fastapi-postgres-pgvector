@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel
 import psycopg2
-import openai
+from openai import OpenAI
 import os
 import json
 from jose import JWTError, jwt
@@ -44,11 +44,11 @@ fake_users_db = {
 
 app = FastAPI()
 
-# Function to compute embeddings
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
 def get_embedding(text):
-    openai.api_key = os.getenv("OPENAI_API_KEY")
-    response = openai.Embedding.create(input=text, model="text-embedding-ada-002")
-    return response["data"][0]["embedding"]
+    response = client.embeddings.create(input=text, model="text-embedding-ada-002")
+    return response.data[0].embedding
 
 # Authentication and JWT handling
 def authenticate_user(username: str, password: str):
