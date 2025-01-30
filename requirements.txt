@@ -3,3 +3,6 @@ uvicorn
 psycopg2-binary
 openai
 pydantic
+python-jose[cryptography]
+passlib[bcrypt]
+python-dotenv
