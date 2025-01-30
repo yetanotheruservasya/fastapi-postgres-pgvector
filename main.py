@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel
 import psycopg2
-from openai import OpenAI
+import openai
 import os
 import json
 from jose import JWTError, jwt
@@ -44,11 +44,24 @@ fake_users_db = {
 
 app = FastAPI()
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
+# Function to compute embeddings
 def get_embedding(text):
-    response = client.embeddings.create(input=text, model="text-embedding-ada-002")
-    return response.data[0].embedding
+    openai.api_key = os.getenv("OPENAI_API_KEY")
+    response = openai.Embedding.create(input=text, model="text-embedding-ada-002")
+    return response["data"][0]["embedding"]
+
+# Generate entity description using GPT-4o
+def generate_description(entity_text):
+    openai.api_key = os.getenv("OPENAI_API_KEY")
+    prompt = f"Generate a short description: for the entity folowing context: {entity_text}"
+    response = openai.ChatCompletion.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": "You are an AI assistant that summarizes company information."},
+            {"role": "user", "content": prompt}
+        ]
+    )
+    return response["choices"][0]["message"]["content"]
 
 # Authentication and JWT handling
 def authenticate_user(username: str, password: str):
@@ -81,6 +94,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
     except JWTError:
         raise credentials_exception
 
+# Endpoint for obtaining token
 @app.post("/token")
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     user = authenticate_user(form_data.username, form_data.password)
@@ -113,33 +127,6 @@ def store_data(company: CompanyData, current_user: dict = Depends(get_current_us
     conn.close()
     return {"message": "Data stored successfully"}
 
-# Endpoint for normalizing data (protected)
-@app.post("/normalize/{company_id}")
-def normalize_data(company_id: str, current_user: dict = Depends(get_current_user)):
-    conn = psycopg2.connect(DATABASE_URL)
-    cur = conn.cursor()
-
-    cur.execute("SELECT data FROM raw_data WHERE company_id = %s", (company_id,))
-    row = cur.fetchone()
-    if not row:
-        raise HTTPException(status_code=404, detail="Company not found")
-
-    data = row[0]
-    name = data.get("name")
-    industry = data.get("industry")
-    description = data.get("description", "")
-
-    vector = get_embedding(description)
-
-    cur.execute(
-        "INSERT INTO companies (name, industry, description, vector) VALUES (%s, %s, %s, %s)",
-        (name, industry, description, vector)
-    )
-    conn.commit()
-    cur.close()
-    conn.close()
-    return {"message": "Data normalized successfully"}
-
 # Vector search (protected)
 @app.get("/search")
 def search_companies(query: str, current_user: dict = Depends(get_current_user)):
@@ -147,9 +134,19 @@ def search_companies(query: str, current_user: dict = Depends(get_current_user))
 
     conn = psycopg2.connect(DATABASE_URL)
     cur = conn.cursor()
-    cur.execute("SELECT id, name, industry FROM companies ORDER BY vector <-> %s::vector LIMIT 5", (vector,))
+    cur.execute("SELECT * FROM companies ORDER BY vector <-> %s LIMIT 5", (vector,))
+    column_names = [desc[0] for desc in cur.description]
     results = cur.fetchall()
     cur.close()
     conn.close()
 
-    return {"results": results}
+    # Generate enhanced descriptions
+    search_results = []
+    for res in results:
+        entity_data = dict(zip(column_names, res))
+        entity_data_text = json.dumps(entity_data, indent=2)
+        enhanced_description = generate_description(entity_data_text)
+        entity_data["enhanced_description"] = enhanced_description
+        search_results.append(entity_data["enhanced_description"])
+    
+    return {"results": search_results}
