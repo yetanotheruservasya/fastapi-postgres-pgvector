@@ -3,6 +3,7 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel
 import psycopg2
 import openai
+from openai import OpenAI
 import os
 import json
 import numpy as np
@@ -46,27 +47,27 @@ fake_users_db = {
 app = FastAPI()
 
 # Function to compute embeddings
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
 def get_embedding(text):
-    openai.api_key = os.getenv("OPENAI_API_KEY")
-    response = openai.embeddings.create(
+    response = client.embeddings.create(
         model="text-embedding-ada-002",
-        input=text,  # Передаём строку, а не список
-        encoding_format="float"  # Явно указываем формат
+        input=text,  
+        encoding_format="float"
     )
-    return response["data"][0]["embedding"]
+    return response.data[0].embedding
 
 # Generate entity description using GPT-4o
 def generate_description(entity_text):
-    openai.api_key = os.getenv("OPENAI_API_KEY")
     prompt = f"Generate a short description for the entity following context: {entity_text}"
-    response = openai.chat.completions.create(
+    response = client.chat.completions.create(
         model="gpt-4o",
         messages=[
             {"role": "system", "content": "You are an AI assistant that summarizes company information."},
             {"role": "user", "content": prompt}
         ]
     )
-    return response["choices"][0]["message"]["content"]
+    return response.choices[0].message.content
 
 # Authentication and JWT handling
 def authenticate_user(username: str, password: str):
