@@ -48,8 +48,12 @@ app = FastAPI()
 # Function to compute embeddings
 def get_embedding(text):
     openai.api_key = os.getenv("OPENAI_API_KEY")
-    response = openai.embeddings.create(model="text-embedding-ada-002", input=[text])
-    return response.data[0].embedding 
+    response = openai.embeddings.create(
+        model="text-embedding-ada-002",
+        input=text,  # Передаём строку, а не список
+        encoding_format="float"  # Явно указываем формат
+    )
+    return response["data"][0]["embedding"]
 
 # Generate entity description using GPT-4o
 def generate_description(entity_text):
