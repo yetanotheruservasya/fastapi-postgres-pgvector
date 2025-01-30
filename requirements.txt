@@ -4,7 +4,7 @@ psycopg2-binary
 openai
 pydantic
 python-jose[cryptography]
-passlib==13.0.0
+passlib[bcrypt]
 python-dotenv
 python-multipart
-bcrypt
+bcrypt==4.0.1
