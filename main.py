@@ -272,6 +272,6 @@ def search_companies(query: str, current_user: dict = Depends(get_current_user))
         entity_data_text = json.dumps(entity_data, indent=2)
         enhanced_description = generate_description(entity_data_text)
         entity_data["enhanced_description"] = enhanced_description
-        search_results.append(entity_data)
+        search_results.append(entity_data["enhanced_description"])
 
     return {"results": search_results}
