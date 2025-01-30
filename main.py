@@ -147,7 +147,7 @@ def search_companies(query: str, current_user: dict = Depends(get_current_user))
 
     conn = psycopg2.connect(DATABASE_URL)
     cur = conn.cursor()
-    cur.execute("SELECT id, name, industry FROM companies ORDER BY vector <-> %s LIMIT 5", (vector,))
+    cur.execute("SELECT id, name, industry FROM companies ORDER BY vector <-> %s::vector LIMIT 5", (vector,))
     results = cur.fetchall()
     cur.close()
     conn.close()

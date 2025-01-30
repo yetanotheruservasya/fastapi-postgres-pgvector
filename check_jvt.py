@@ -13,7 +13,12 @@ def get_token():
     data = {"username": USERNAME, "password": PASSWORD}
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
     
-    response = requests.post(url, data=data, headers=headers)
+    try:
+        response = requests.post(url, data=data, headers=headers)
+        response.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Ошибка получения токена: {e}")
+        return None
     
     if response.status_code == 200:
         token = response.json().get("access_token")
@@ -28,7 +33,12 @@ def test_protected_request(token):
     url = f"{API_URL}/search?query=test"
     headers = {"Authorization": f"Bearer {token}"}
     
-    response = requests.get(url, headers=headers)
+    try:
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Ошибка запроса: {e}")
+        return
     
     if response.status_code == 200:
         print(f"✅ Запрос успешен! Ответ:\n{response.json()}")
