@@ -1,15 +1,19 @@
+"""
+Main module for working with the company database.
+Contains functions for authentication, data storage, normalization, and search.
+"""
+import os
+import json
+from datetime import datetime, timedelta
+
 from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel
 import psycopg2
-import openai
 from openai import OpenAI
-import os
-import json
 import numpy as np
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -50,39 +54,73 @@ app = FastAPI()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 def get_embedding(text):
+    """
+    Gets the vector representation of text using the OpenAI model.
+    
+    :param text: Text to be converted.
+    :return: Vector representation of the text.
+    """
     response = client.embeddings.create(
         model="text-embedding-ada-002",
-        input=text,  
+        input=text,
         encoding_format="float"
     )
     return response.data[0].embedding
 
 # Generate entity description using GPT-4o
 def generate_description(entity_text):
+    """
+    Generates a description of an entity using the GPT-4o model.
+    
+    :param entity_text: Text of the entity.
+    :return: Generated description.
+    """
     prompt = f"Generate a short description for the entity following context: {entity_text}"
     response = client.chat.completions.create(
         model="gpt-4o",
         messages=[
-            {"role": "system", "content": "You are an AI assistant that summarizes company information."},
-            {"role": "user", "content": prompt}
+            {"role": "system",
+             "content": "You are an AI assistant that summarizes company information."},
+            {"role": "user",
+             "content": prompt}
         ]
     )
     return response.choices[0].message.content
 
 # Authentication and JWT handling
 def authenticate_user(username: str, password: str):
+    """
+    Authenticates a user by username and password.
+    
+    :param username: Username.
+    :param password: User password.
+    :return: User data or False if authentication failed.
+    """
     user = fake_users_db.get(username)
     if not user or not pwd_context.verify(password, user["hashed_password"]):
         return False
     return user
 
 def create_access_token(data: dict, expires_delta: timedelta = None):
+    """
+    Creates a JWT access token.
+    
+    :param data: Data to include in the token.
+    :param expires_delta: Token expiration time.
+    :return: Generated JWT token.
+    """
     to_encode = data.copy()
     expire = datetime.utcnow() + (expires_delta or timedelta(minutes=15))
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 async def get_current_user(token: str = Depends(oauth2_scheme)):
+    """
+    Gets the current authenticated user by JWT token.
+    
+    :param token: JWT token.
+    :return: User data.
+    """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -97,12 +135,18 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
         if user is None:
             raise credentials_exception
         return user
-    except JWTError:
-        raise credentials_exception
+    except JWTError as exc:
+        raise credentials_exception from exc
 
 # Endpoint for obtaining token
 @app.post("/token")
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    """
+    Endpoint for obtaining a JWT token.
+    
+    :param form_data: Form data for authentication.
+    :return: Access token and token type.
+    """
     user = authenticate_user(form_data.username, form_data.password)
     if not user:
         raise HTTPException(
@@ -115,15 +159,41 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
 
 # Data model
 class CompanyData(BaseModel):
+    """
+    Company data model.
+    """
     source: str
     company_id: str
     data: dict
 
 # Endpoint for storing JSONB data (protected)
 @app.post("/store")
-def store_data(company: CompanyData, current_user: dict = Depends(get_current_user)):
+def store_data(
+    company: CompanyData,
+    current_user: dict = Depends(get_current_user)
+    ):
+    """
+    Endpoint for storing company data in JSONB format.
+    
+    :param company: Company data.
+    :param current_user: Current authenticated user.
+    :return: Message about successful data storage.
+    """
     conn = psycopg2.connect(DATABASE_URL)
     cur = conn.cursor()
+    # Validate user authentication
+    if not current_user or current_user.get("disabled"):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User is not authorized or disabled"
+        )
+
+    # Validate input data
+    if not company.source or not company.company_id or not company.data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing required fields: source, company_id, or data"
+        )
     cur.execute(
         "INSERT INTO raw_data (source, company_id, data) VALUES (%s, %s, %s)",
         (company.source, company.company_id, json.dumps(company.data))
@@ -133,9 +203,15 @@ def store_data(company: CompanyData, current_user: dict = Depends(get_current_us
     conn.close()
     return {"message": "Data stored successfully"}
 
-# Обработчик для нормализации данных
+# Handler for normalizing data
 @app.post("/normalize/{company_id}")
 def normalize_data(company_id: str):
+    """
+    Handler for normalizing company data.
+    
+    :param company_id: Company identifier.
+    :return: Message about successful data normalization.
+    """
     conn = psycopg2.connect(DATABASE_URL)
     cur = conn.cursor()
 
@@ -163,12 +239,27 @@ def normalize_data(company_id: str):
 # Vector search (protected)
 @app.get("/search")
 def search_companies(query: str, current_user: dict = Depends(get_current_user)):
+    """
+    Endpoint for searching companies by vector representation of the query.
+    
+    :param query: Search query.
+    :param current_user: Current authenticated user.
+    :return: Search results with enhanced descriptions.
+    """
+    if not current_user or current_user.get("disabled"):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User is not authorized or disabled"
+        )
     vector = get_embedding(query)
-    vector = np.array(vector, dtype=np.float32).tolist()  # Преобразуем в список float32
+    vector = np.array(vector, dtype=np.float32).tolist()  # Convert to float32 list
 
     conn = psycopg2.connect(DATABASE_URL)
     cur = conn.cursor()
-    cur.execute("SELECT * FROM companies ORDER BY vector <-> %s::vector LIMIT 5", (json.dumps(vector),))
+    cur.execute(
+        "SELECT * FROM companies ORDER BY vector <-> %s::vector LIMIT 5",
+        (json.dumps(vector),))
+
     column_names = [desc[0] for desc in cur.description]
     results = cur.fetchall()
     cur.close()
