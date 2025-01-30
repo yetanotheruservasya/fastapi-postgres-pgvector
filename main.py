@@ -53,9 +53,9 @@ def get_embedding(text):
 # Generate entity description using GPT-4o
 def generate_description(entity_text):
     openai.api_key = os.getenv("OPENAI_API_KEY")
-    prompt = f"Generate a short description: for the entity folowing context: {entity_text}"
-    response = openai.ChatCompletion.create(
-        model="gpt-4o",
+    prompt = f"Generate a short description for the entity following context: {entity_text}"
+    response = openai.chat.completions.create(
+        model="gpt-4",
         messages=[
             {"role": "system", "content": "You are an AI assistant that summarizes company information."},
             {"role": "user", "content": prompt}
