@@ -4,7 +4,7 @@ Contains functions for authentication, data storage, normalization, and search.
 """
 import os
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
@@ -25,7 +25,11 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 # Database settings
-DATABASE_URL = os.getenv("DATABASE_URL", "dbname=companies user=myuser password=mypassword host=db")
+POSTGRES_USER = os.getenv("POSTGRES_USER", "myuser")
+POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "mypassword")
+POSTGRES_DB = os.getenv("POSTGRES_DB", "companies")
+POSTGRES_HOST = os.getenv("POSTGRES_HOST", "db")
+DATABASE_URL = f"dbname={POSTGRES_DB} user={POSTGRES_USER} password={POSTGRES_PASSWORD} host={POSTGRES_HOST}"
 
 # Password hashing settings
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -51,7 +55,32 @@ fake_users_db = {
 app = FastAPI()
 
 # Function to compute embeddings
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+class OpenAIClientSingleton:
+    """
+    Singleton class to manage the OpenAI client instance.
+    Ensures that only one instance of the client is created.
+    """
+    _instance = None
+
+    @classmethod
+    def get_client(cls):
+        """
+        Returns OpenAI client instance with API key from environment.
+        Uses singleton pattern to avoid multiple client creations.
+        """
+        if cls._instance is None:
+            api_key = os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                raise ValueError("OPENAI_API_KEY environment variable is not set")
+            cls._instance = OpenAI(api_key=api_key)
+            print(f"Using OpenAI API key: {api_key[:5]}...")  # Log the first few characters of the API key for debugging
+        return cls._instance
+
+def get_openai_client():
+    """
+    Returns the OpenAI client instance.
+    """
+    return OpenAIClientSingleton.get_client()
 
 def get_embedding(text):
     """
@@ -60,6 +89,7 @@ def get_embedding(text):
     :param text: Text to be converted.
     :return: Vector representation of the text.
     """
+    client = get_openai_client()
     response = client.embeddings.create(
         model="text-embedding-ada-002",
         input=text,
@@ -75,6 +105,7 @@ def generate_description(entity_text):
     :param entity_text: Text of the entity.
     :return: Generated description.
     """
+    client = get_openai_client()
     prompt = f"Generate a short description for the entity following context: {entity_text}"
     response = client.chat.completions.create(
         model="gpt-4o",
@@ -110,7 +141,7 @@ def create_access_token(data: dict, expires_delta: timedelta = None):
     :return: Generated JWT token.
     """
     to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=15))
+    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=15))
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
@@ -179,6 +210,7 @@ def store_data(
     :param current_user: Current authenticated user.
     :return: Message about successful data storage.
     """
+    print(f"DATABASE_URL: {DATABASE_URL}")  # Add logging to verify DATABASE_URL
     conn = psycopg2.connect(DATABASE_URL)
     cur = conn.cursor()
     # Validate user authentication
