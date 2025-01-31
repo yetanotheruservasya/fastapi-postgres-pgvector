@@ -16,8 +16,9 @@ echo "POSTGRES_PASSWORD: $POSTGRES_PASSWORD"
 # Путь для сохранения файла servers.json
 SERVERS_JSON_PATH="/var/lib/pgadmin/servers.json"
 
+# Генерация файла servers.json
 echo "====> Generating servers.json at $SERVERS_JSON_PATH"
-cat <<EOF > $SERVERS_JSON_PATH
+cat <<EOF > "$SERVERS_JSON_PATH"
 {
     "Servers": {
         "1": {
@@ -35,8 +36,23 @@ cat <<EOF > $SERVERS_JSON_PATH
 }
 EOF
 
+if [[ $? -ne 0 ]]; then
+  echo "Ошибка: Не удалось создать $SERVERS_JSON_PATH"
+  exit 1
+fi
+
+# Настройка прав доступа к файлу
+echo "====> Setting permissions for servers.json"
+chown pgadmin:pgadmin "$SERVERS_JSON_PATH" && chmod 644 "$SERVERS_JSON_PATH"
+
+if [[ $? -ne 0 ]]; then
+  echo "Ошибка: Не удалось настроить права для $SERVERS_JSON_PATH"
+  exit 1
+fi
+
+# Проверяем содержимое файла
 echo "====> Generated servers.json:"
-cat $SERVERS_JSON_PATH
+cat "$SERVERS_JSON_PATH"
 
 # Запускаем pgAdmin
 echo "====> Starting pgAdmin"
