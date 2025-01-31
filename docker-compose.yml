@@ -41,7 +41,7 @@ services:
     env_file:
       - .env
     ports:
-      - "5050:80"
+      - "${PGADMIN_LISTEN_PORT}:${PGADMIN_LISTEN_PORT}"
     depends_on:
       - db
     volumes:
@@ -51,7 +51,7 @@ services:
       - "/bin/bash"
       - "-c"
       - |
-        chmod -R 777 /var/lib/pgadmin && \
+        chmod +x /docker-entrypoint-initdb.d/generate_servers.sh && \
         /docker-entrypoint-initdb.d/generate_servers.sh
     environment:
       - PGADMIN_CONFIG_SERVER_MODE=False
@@ -61,6 +61,8 @@ services:
       - POSTGRES_DB=${POSTGRES_DB}
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - PGADMIN_LISTEN_PORT=${PGADMIN_LISTEN_PORT}
+      - PGADMIN_LISTEN_ADDRESS=${PGADMIN_LISTEN_ADDRESS}
 
 volumes:
   pgdata:
