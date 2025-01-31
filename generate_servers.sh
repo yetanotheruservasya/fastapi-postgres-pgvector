@@ -1,17 +1,21 @@
 #!/bin/bash
 
+# Логируем старт скрипта
+echo "====> Starting generate_servers.sh"
+
 # Проверяем, что переменные окружения установлены
 if [[ -z "$POSTGRES_DB" || -z "$POSTGRES_USER" || -z "$POSTGRES_PASSWORD" ]]; then
-  echo "Ошибка: Переменные окружения POSTGRES_DB, POSTGRES_USER или POSTGRES_PASSWORD не установлены."
+  echo "Ошибка: Не установлены переменные окружения POSTGRES_DB, POSTGRES_USER или POSTGRES_PASSWORD."
   exit 1
 fi
 
-# Логируем значения переменных для отладки
+# Логируем значения переменных
 echo "POSTGRES_DB: $POSTGRES_DB"
 echo "POSTGRES_USER: $POSTGRES_USER"
 echo "POSTGRES_PASSWORD: $POSTGRES_PASSWORD"
 
-# Генерируем servers.json с подстановкой значений переменных
+# Генерируем servers.json
+echo "====> Generating servers.json"
 cat <<EOF > /pgadmin4/servers.json
 {
     "Servers": {
@@ -30,5 +34,10 @@ cat <<EOF > /pgadmin4/servers.json
 }
 EOF
 
+# Логируем содержимое файла
+echo "====> Generated servers.json:"
+cat /pgadmin4/servers.json
+
 # Запускаем pgAdmin
+echo "====> Starting pgAdmin"
 exec /entrypoint.sh "$@"
