@@ -2,9 +2,9 @@
 
 echo "====> Starting generate_servers.sh"
 
-# Проверяем, что переменные окружения установлены
+# Убедитесь, что переменные окружения установлены
 if [[ -z "$POSTGRES_DB" || -z "$POSTGRES_USER" || -z "$POSTGRES_PASSWORD" ]]; then
-  echo "Ошибка: Не установлены переменные окружения POSTGRES_DB, POSTGRES_USER или POSTGRES_PASSWORD."
+  echo "Ошибка: Переменные окружения POSTGRES_DB, POSTGRES_USER или POSTGRES_PASSWORD не установлены."
   exit 1
 fi
 
@@ -13,13 +13,11 @@ echo "POSTGRES_DB: $POSTGRES_DB"
 echo "POSTGRES_USER: $POSTGRES_USER"
 echo "POSTGRES_PASSWORD: $POSTGRES_PASSWORD"
 
-# Исправляем права доступа
-echo "====> Fixing permissions for /pgadmin4"
-chmod -R 777 /pgadmin4 || { echo "Ошибка: Не удалось изменить права доступа на /pgadmin4"; exit 1; }
+# Путь для сохранения файла servers.json
+SERVERS_JSON_PATH="/var/lib/pgadmin/servers.json"
 
-# Генерируем servers.json
-echo "====> Generating servers.json"
-cat <<EOF > /pgadmin4/servers.json
+echo "====> Generating servers.json at $SERVERS_JSON_PATH"
+cat <<EOF > $SERVERS_JSON_PATH
 {
     "Servers": {
         "1": {
@@ -37,9 +35,8 @@ cat <<EOF > /pgadmin4/servers.json
 }
 EOF
 
-# Логируем содержимое файла
 echo "====> Generated servers.json:"
-cat /pgadmin4/servers.json
+cat $SERVERS_JSON_PATH
 
 # Запускаем pgAdmin
 echo "====> Starting pgAdmin"
