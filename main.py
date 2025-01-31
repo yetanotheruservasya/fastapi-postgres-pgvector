@@ -25,10 +25,10 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 # Database settings
-POSTGRES_USER = os.getenv("POSTGRES_USER", "myuser")
-POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "mypassword")
-POSTGRES_DB = os.getenv("POSTGRES_DB", "companies")
-POSTGRES_HOST = os.getenv("POSTGRES_HOST", "db")
+POSTGRES_USER = os.getenv("POSTGRES_USER", "---")
+POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "---")
+POSTGRES_DB = os.getenv("POSTGRES_DB", "---")
+POSTGRES_HOST = os.getenv("POSTGRES_HOST", "---")
 DATABASE_URL = f"dbname={POSTGRES_DB} user={POSTGRES_USER} password={POSTGRES_PASSWORD} host={POSTGRES_HOST}"
 
 # Password hashing settings
@@ -36,10 +36,10 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 # Load user credentials from environment variables
-ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "password")
-ADMIN_FULL_NAME = os.getenv("ADMIN_FULL_NAME", "Admin User")
-ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "admin@example.com")
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "---")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "---")
+ADMIN_FULL_NAME = os.getenv("ADMIN_FULL_NAME", "---")
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "---")
 
 # User database (can be replaced with a real database)
 fake_users_db = {
