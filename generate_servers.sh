@@ -43,7 +43,7 @@ fi
 
 # Настройка прав доступа к файлу
 echo "====> Setting permissions for servers.json"
-chown pgadmin:pgadmin "$SERVERS_JSON_PATH" && chmod 644 "$SERVERS_JSON_PATH"
+chown root:root "$SERVERS_JSON_PATH" && chmod 644 "$SERVERS_JSON_PATH"
 
 if [[ $? -ne 0 ]]; then
   echo "Ошибка: Не удалось настроить права для $SERVERS_JSON_PATH"
