@@ -1,6 +1,5 @@
 #!/bin/bash
 
-# Логируем старт скрипта
 echo "====> Starting generate_servers.sh"
 
 # Проверяем, что переменные окружения установлены
@@ -9,10 +8,14 @@ if [[ -z "$POSTGRES_DB" || -z "$POSTGRES_USER" || -z "$POSTGRES_PASSWORD" ]]; th
   exit 1
 fi
 
-# Логируем значения переменных
+# Логируем переменные
 echo "POSTGRES_DB: $POSTGRES_DB"
 echo "POSTGRES_USER: $POSTGRES_USER"
 echo "POSTGRES_PASSWORD: $POSTGRES_PASSWORD"
+
+# Исправляем права доступа
+echo "====> Fixing permissions for /pgadmin4"
+chmod -R 777 /pgadmin4 || { echo "Ошибка: Не удалось изменить права доступа на /pgadmin4"; exit 1; }
 
 # Генерируем servers.json
 echo "====> Generating servers.json"
