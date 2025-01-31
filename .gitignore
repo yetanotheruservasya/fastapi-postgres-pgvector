@@ -1,3 +1,4 @@
 venv/
 linkedin_profile.json
 __pycache__/
+.env
