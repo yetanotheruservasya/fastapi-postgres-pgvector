@@ -1,5 +1,10 @@
 #!/bin/bash
 
+# Ensure environment variables are exported
+export POSTGRES_DB=${POSTGRES_DB}
+export POSTGRES_USER=${POSTGRES_USER}
+export POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+
 cat <<EOF > /pgadmin4/servers.json
 {
     "Servers": {

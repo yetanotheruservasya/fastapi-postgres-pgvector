@@ -73,7 +73,7 @@ class OpenAIClientSingleton:
             if not api_key:
                 raise ValueError("OPENAI_API_KEY environment variable is not set")
             cls._instance = OpenAI(api_key=api_key)
-            print(f"Using OpenAI API key: {api_key[:5]}...")  # Log the first few characters of the API key for debugging
+            print(f"Using OpenAI API key: {api_key[:5]}...")
         return cls._instance
 
 def get_openai_client():
