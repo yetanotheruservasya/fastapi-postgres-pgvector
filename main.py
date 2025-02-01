@@ -480,7 +480,11 @@ def delete_database(current_user: dict = Depends(get_current_active_user)):
     Deletes the database if necessary.
     WARNING: This is a destructive operation!
     """
-    with get_super_db_connection() as conn:
+    conn = get_super_db_connection()
+    try:
+        # Set autocommit to True to execute DROP DATABASE
+        conn.set_session(autocommit=True)
+        
         with conn.cursor() as cur:
             # Terminate all connections to the target database
             cur.execute("""
@@ -489,8 +493,10 @@ def delete_database(current_user: dict = Depends(get_current_active_user)):
                 WHERE datname = %s AND pid <> pg_backend_pid();
             """, (POSTGRES_DB,))
             # Drop the database
-            cur.execute(f"DROP DATABASE IF EXISTS {POSTGRES_DB};")
-            conn.commit()
+            cur.execute(f"DROP DATABASE IF EXISTS {POSTGRES_DB}")
+    finally:
+        conn.close()
+    
     return {"message": f"Database {POSTGRES_DB} deleted successfully"}
 
 #####################################
