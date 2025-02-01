@@ -442,17 +442,28 @@ def search_companies(
 @app.delete("/admin/delete_data")
 def delete_data(current_user: dict = Depends(get_current_active_user)):
     """
-    Deletes all data from the raw_data and normalized tables (for example, companies).
+    Deletes all data from existing tables (raw_data and companies).
+    Skips tables that don't exist.
     """
     with get_db() as conn:
         with conn.cursor() as cur:
-            # Delete data from both tables
-            cur.execute(
-                "TRUNCATE TABLE raw_data, companies "
-                "RESTART IDENTITY;"
-            )
-            conn.commit()
-    return {"message": "Data deleted successfully from raw_data and companies tables"}
+            # Check if tables exist before truncating
+            cur.execute("""
+                SELECT table_name 
+                FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name IN ('raw_data', 'companies');
+            """)
+            existing_tables = [row[0] for row in cur.fetchall()]
+            
+            if existing_tables:
+                # Build TRUNCATE query only for existing tables
+                tables_to_truncate = ', '.join(existing_tables)
+                cur.execute(f"TRUNCATE TABLE {tables_to_truncate} RESTART IDENTITY;")
+                conn.commit()
+                return {"message": f"Data deleted successfully from tables: {tables_to_truncate}"}
+            else:
+                return {"message": "No tables found to delete data from"}
 
 #####################################
 # 2. Dropping Tables and Databases
