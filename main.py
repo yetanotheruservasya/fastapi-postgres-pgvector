@@ -1,3 +1,8 @@
+"""
+This module implements the main API,
+handling authentication, OpenAI communications, and database operations.
+"""
+
 import os
 import json
 import logging
@@ -11,37 +16,37 @@ from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from pydantic import BaseModel
 from dotenv import load_dotenv
 from openai import OpenAI
+from models import CompanyData  # Import the CompanyData model
 
-# Загружаем переменные окружения и настраиваем логирование
+# Load environment variables and configure logging
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
 
-# Конфигурация безопасности и JWT
+# Security and JWT configuration
 SECRET_KEY = os.getenv("SECRET_KEY", "supersecretkey")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
-# Настройки базы данных
+# Database settings
 POSTGRES_USER = os.getenv("POSTGRES_USER", "---")
 POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "---")
 POSTGRES_DB = os.getenv("POSTGRES_DB", "---")
 POSTGRES_HOST = os.getenv("POSTGRES_HOST", "---")
 DATABASE_URL = f"dbname={POSTGRES_DB} user={POSTGRES_USER} password={POSTGRES_PASSWORD} host={POSTGRES_HOST}"
 
-# Настройки хэширования паролей
+# Password hashing settings
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
-# Данные администратора (например, для тестирования)
+# Admin data (e.g., for testing)
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "---")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "---")
 ADMIN_FULL_NAME = os.getenv("ADMIN_FULL_NAME", "---")
 ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "---")
 
-# "Фейковая" база пользователей (можно заменить на реальную)
+# "Fake" user database (can be replaced with a real one)
 fake_users_db: Dict[str, Dict[str, Any]] = {
     ADMIN_USERNAME: {
         "username": ADMIN_USERNAME,
@@ -54,33 +59,36 @@ fake_users_db: Dict[str, Dict[str, Any]] = {
 
 app = FastAPI()
 
-# --- Работа с OpenAI ---
+# --- Working with OpenAI ---
 
 class OpenAIClientSingleton:
     """
-    Singleton для клиента OpenAI.
+    Singleton for OpenAI client.
     """
     _instance: OpenAI = None
 
     @classmethod
     def get_client(cls) -> OpenAI:
+        """
+        Returns the singleton instance of the OpenAI client.
+        """
         if cls._instance is None:
             api_key = os.getenv("OPENAI_API_KEY")
             if not api_key:
                 raise ValueError("OPENAI_API_KEY environment variable is not set")
             cls._instance = OpenAI(api_key=api_key)
-            logging.info(f"Initialized OpenAI client with API key: {api_key[:5]}...")
+            logging.info("Initialized OpenAI client with API key: %s...", api_key[:5])
         return cls._instance
 
 def get_openai_client() -> OpenAI:
     """
-    Возвращает экземпляр клиента OpenAI.
+    Returns an instance of the OpenAI client.
     """
     return OpenAIClientSingleton.get_client()
 
 def get_embedding(text: str) -> List[float]:
     """
-    Получает векторное представление текста с помощью модели OpenAI.
+    Gets the vector representation of the text using the OpenAI model.
     """
     client = get_openai_client()
     response = client.embeddings.create(
@@ -92,7 +100,7 @@ def get_embedding(text: str) -> List[float]:
 
 def generate_description(entity_text: str) -> str:
     """
-    Генерирует описание для сущности с помощью модели GPT-4o.
+    Generates a description for the entity using the GPT-4o model.
     """
     client = get_openai_client()
     prompt = f"Generate a short description for the entity following context: {entity_text}"
@@ -108,11 +116,11 @@ def generate_description(entity_text: str) -> str:
     )
     return response.choices[0].message.content
 
-# --- Аутентификация и JWT ---
+# --- Authentication and JWT ---
 
 def authenticate_user(username: str, password: str) -> Any:
     """
-    Проверяет корректность имени пользователя и пароля.
+    Verifies the correctness of the username and password.
     """
     user = fake_users_db.get(username)
     if not user or not pwd_context.verify(password, user["hashed_password"]):
@@ -121,7 +129,7 @@ def authenticate_user(username: str, password: str) -> Any:
 
 def create_access_token(data: dict, expires_delta: timedelta = None) -> str:
     """
-    Создаёт JWT токен.
+    Creates a JWT token.
     """
     to_encode = data.copy()
     expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=15))
@@ -130,7 +138,7 @@ def create_access_token(data: dict, expires_delta: timedelta = None) -> str:
 
 async def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
     """
-    Получает пользователя по JWT токену.
+    Gets the user by JWT token.
     """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -151,7 +159,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
 
 async def get_current_active_user(current_user: dict = Depends(get_current_user)) -> dict:
     """
-    Проверяет, что пользователь активен (не отключён).
+    Checks that the user is active (not disabled).
     """
     if current_user.get("disabled"):
         raise HTTPException(
@@ -163,7 +171,7 @@ async def get_current_active_user(current_user: dict = Depends(get_current_user)
 @app.post("/token")
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     """
-    Эндпоинт для получения JWT токена.
+    Endpoint for obtaining a JWT token.
     """
     user = authenticate_user(form_data.username, form_data.password)
     if not user:
@@ -175,12 +183,12 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     access_token = create_access_token(data={"sub": user["username"]})
     return {"access_token": access_token, "token_type": "bearer"}
 
-# --- Работа с базой данных ---
+# --- Working with the database ---
 
 @contextmanager
 def get_db():
     """
-    Контекстный менеджер для подключения к базе данных.
+    Context manager for connecting to the database.
     """
     conn = psycopg2.connect(DATABASE_URL)
     try:
@@ -188,26 +196,24 @@ def get_db():
     finally:
         conn.close()
 
-# Модель данных компании
-class CompanyData(BaseModel):
-    source: str
-    company_id: str
-    data: dict
-
 @app.post("/store")
 def store_data(
-    company: CompanyData,
-    current_user: dict = Depends(get_current_active_user)
-):
+        company: CompanyData,
+        current_user: dict = Depends(get_current_active_user)
+    ):
     """
-    Эндпоинт для сохранения данных компании (JSONB) в БД.
+    Endpoint for saving company data (JSONB) to the database.
     """
     if not company.source or not company.company_id or not company.data:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Missing required fields: source, company_id, or data"
         )
-    logging.info(f"Storing data for company_id: {company.company_id} from source: {company.source}")
+    logging.info(
+        "Storing data for company_id: %s from source: %s",
+        company.company_id,
+        company.source
+    )
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -223,8 +229,8 @@ def normalize_data(
     current_user: dict = Depends(get_current_active_user)
 ):
     """
-    Эндпоинт для нормализации данных компании.
-    Доступен только для аутентифицированных пользователей.
+    Endpoint for normalizing company data.
+    Available only to authenticated users.
     """
     with get_db() as conn:
         with conn.cursor() as cur:
@@ -250,10 +256,10 @@ def search_companies(
     current_user: dict = Depends(get_current_active_user)
 ):
     """
-    Эндпоинт для поиска компаний с использованием векторного представления запроса.
+    Endpoint for searching companies using the vector representation of the query.
     """
     vector = get_embedding(query)
-    # Приводим вектор к списку значений float32
+    # Convert the vector to a list of float32 values
     vector = np.array(vector, dtype=np.float32).tolist()
     with get_db() as conn:
         with conn.cursor() as cur:
