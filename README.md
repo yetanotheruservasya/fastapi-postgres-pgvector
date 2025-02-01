@@ -1,6 +1,6 @@
 # FastAPI + PostgreSQL + pgVector + pgAdmin
 
-🚀 **A fully containerized stack for storing, normalizing, and searching company data**, with support for JSONB, structured data, and vector search.
+🚀 **A fully containerized stack for storing, normalizing, and searching entities**, with support for JSONB, structured data, and vector search.
 
 ---
 
@@ -15,7 +15,7 @@
 - Ability to add **computed fields** and recalculate vector representations.  
 
 ### 3️⃣ **Text and Semantic Search**  
-- Vector representation (pgVector) allows finding **similar companies** based on descriptions and other parameters.  
+- Vector representation (pgVector) allows finding **similar entities** based on descriptions and other parameters.  
 - AI integration (OpenAI API) for **semantic search**.  
 
 ### 4️⃣ **Ready for RAG (Retrieval-Augmented Generation)**  
@@ -93,24 +93,30 @@ curl -X POST "http://localhost:8000/admin/create_tables" -H "Authorization: Bear
 #### File Paths
 - `ENTITY_CONFIG_FILE`: Path to entity configuration JSON file
 
-### Entity Configuration (entity_config.json)
+### Example of Entity Configuration (entity_config.json)
 
 ```json
 {
-  "entity_name": "company",
-  "fields": {
-    "name": {
-      "source_field": "data.name",
-      "required": true
+    "entity_name": "company",
+    "fields": {
+        "name": {
+            "source_field": "name",
+            "required": true
+        },
+        "industry": {
+            "source_field": "industries",
+            "required": false
+        },
+        "description": {
+            "source_field": "description",
+            "required": false,
+            "vectorize": true
+        }
     },
-    "description": {
-      "source_field": "data.description",
-      "required": false
+    "vector_settings": {
+        "vector_field": "description",
+        "model": "text-embedding-ada-002"
     }
-  },
-  "vector_settings": {
-    "vector_field": "description"
-  }
 }
 ```
 
@@ -146,9 +152,9 @@ curl -X POST "http://localhost:8000/store" \
 ### Data Operations
 | Method   | URL                         | Description                                |
 |----------|-----------------------------|--------------------------------------------|
-| **POST** | `/store`                   | Save company JSONB data                    |
-| **POST** | `/normalize/{company_id}`  | Normalize company data                     |
-| **GET**  | `/search?query=...`        | Search for companies via vector embedding  |
+| **POST** | `/store`                   | Save entity raw data (JSONB)                    |
+| **POST** | `/normalize/{entity_id}`  | Normalize entity data                     |
+| **GET**  | `/search?query=...`        | Search for entities via vector embedding  |
 
 ### Admin Operations
 | Method     | URL                         | Description                           |
