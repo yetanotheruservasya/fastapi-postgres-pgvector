@@ -91,7 +91,7 @@ def load_entity_config(config_path: str = ENTITY_CONFIG_FILE) -> EntityConfig:
         raise FileNotFoundError(f"Configuration file {config_path} not found")
     with open(config_path, "r", encoding="utf-8") as f:
         raw_config = json.load(f)
-    # Создаем объект EntityConfig, валидация происходит здесь
+    # Create the EntityConfig object; validation happens here
     entity_config = EntityConfig.model_validate(raw_config)
     return entity_config
 
@@ -122,6 +122,19 @@ def get_db():
         yield conn
     finally:
         conn.close()
+
+# Function to obtain a super connection to the postgres database (for creating/deleting databases)
+def get_super_db_connection():
+    """
+    Returns a connection to the 'postgres' database for administrative operations.
+    """
+    conn = psycopg2.connect(
+        dbname="postgres",
+        user=POSTGRES_USER,
+        password=POSTGRES_PASSWORD,
+        host=POSTGRES_HOST
+    )
+    return conn
 
 try:
     config = load_entity_config()
@@ -280,17 +293,20 @@ def store_data(
         if field_conf.required and value is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Missing required field: '{field_name}' (expected at '{field_conf.source_field}')"
+                detail=(
+                    f"Missing required field: '{field_name}' "
+                    f"(expected at '{field_conf.source_field}')"
+                )
             )
         normalized_data[field_name] = value
 
-    # Вместо явного указания полей «source» и «entity_id» используем весь дамп модели entity.
-    # Таким образом, все данные, присутствующие в EntityData, будут сохранены.
+    # Instead of explicitly specifying the 'source' and 'entity_id' fields,
+    # use the full model dump from entity so that all EntityData values are saved.
     data_to_insert = entity.model_dump()
-    # Обновляем/дополняем данными из нормализации (они могут переопределить соответствующие поля, если это нужно)
+    # Update/merge normalized data (it may override corresponding fields if necessary)
     data_to_insert.update(normalized_data)
 
-    # Формируем динамически SQL-запрос для вставки данных
+    # Generate the dynamic SQL query for inserting data
     columns = list(data_to_insert.keys())
     values = list(data_to_insert.values())
     columns_str = ', '.join(columns)
@@ -332,7 +348,10 @@ def normalize_data(
     # 1. Check for the presence of the company identifier in raw_data.
     #    It is assumed that the raw_data schema includes the key "company_id".
     if "company_id" not in raw_data:
-        raise HTTPException(status_code=400, detail="Company identifier ('company_id') is missing in raw_data")
+        raise HTTPException(
+            status_code=400,
+            detail="Company identifier ('company_id') is missing in raw_data"
+        )
 
     # 2. Normalize data based on the configuration.
     normalized_data = {}
@@ -341,7 +360,10 @@ def normalize_data(
         if field_conf.required and value is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Missing required field: '{field_name}' (expected at '{field_conf.source_field}')"
+                detail=(
+                    f"Missing required field: '{field_name}' "
+                    f"(expected at '{field_conf.source_field}')"
+                )
             )
         normalized_data[field_name] = value
 
@@ -363,7 +385,10 @@ def normalize_data(
     try:
         normalized_company = EntityNormalizedData(**normalized_data)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Validation error in normalized data: {e}") from e
+        raise HTTPException(
+            status_code=400,
+            detail=f"Validation error in normalized data: {e}"
+        ) from e
 
     # 5. Dynamically insert the normalized data into the companies table.
     data_to_insert = normalized_company.model_dump()
@@ -381,7 +406,6 @@ def normalize_data(
             conn.commit()
 
     return {"message": "Data normalized successfully"}
-
 
 @app.get("/search")
 def search_companies(
@@ -411,3 +435,140 @@ def search_companies(
         entity_data["enhanced_description"] = enhanced_description
         search_results.append(entity_data)
     return {"results": search_results}
+
+#####################################
+# 1. Deleting Data from Tables
+#####################################
+@app.delete("/admin/delete_data")
+def delete_data(current_user: dict = Depends(get_current_active_user)):
+    """
+    Deletes all data from the raw_data and normalized tables (for example, companies).
+    """
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Delete data from both tables
+            cur.execute(
+                "TRUNCATE TABLE raw_data, companies "
+                "RESTART IDENTITY;"
+            )
+            conn.commit()
+    return {"message": "Data deleted successfully from raw_data and companies tables"}
+
+#####################################
+# 2. Dropping Tables and Databases
+#####################################
+@app.delete("/admin/delete_tables")
+def delete_tables(current_user: dict = Depends(get_current_active_user)):
+    """
+    Drops the raw_data and normalized tables (for example, companies) from the database.
+    """
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # If the tables depend on each other, CASCADE can be used
+            cur.execute(
+                "DROP TABLE IF EXISTS raw_data CASCADE;"
+            )
+            cur.execute(
+                "DROP TABLE IF EXISTS companies CASCADE;"
+            )
+            conn.commit()
+    return {"message": "Tables raw_data and companies dropped successfully"}
+
+@app.delete("/admin/delete_database")
+def delete_database(current_user: dict = Depends(get_current_active_user)):
+    """
+    Deletes the database if necessary.
+    WARNING: This is a destructive operation!
+    """
+    with get_super_db_connection() as conn:
+        with conn.cursor() as cur:
+            # Terminate all connections to the target database
+            cur.execute("""
+                SELECT pg_terminate_backend(pid)
+                FROM pg_stat_activity
+                WHERE datname = %s AND pid <> pg_backend_pid();
+            """, (POSTGRES_DB,))
+            # Drop the database
+            cur.execute(f"DROP DATABASE IF EXISTS {POSTGRES_DB};")
+            conn.commit()
+    return {"message": f"Database {POSTGRES_DB} deleted successfully"}
+
+#####################################
+# 3. Creating Tables and Databases Based on Configuration
+#####################################
+@app.post("/admin/create_database")
+def create_database(current_user: dict = Depends(get_current_active_user)):
+    """
+    Creates the database if it does not exist.
+    """
+    with get_super_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (POSTGRES_DB,))
+            if not cur.fetchone():
+                cur.execute(
+                    f"CREATE DATABASE {POSTGRES_DB} OWNER {POSTGRES_USER} "
+                    "ENCODING 'UTF8';"
+                )
+                conn.commit()
+    return {"message": f"Database {POSTGRES_DB} created successfully (if it did not exist)"}
+
+@app.post("/admin/create_tables")
+def create_tables(current_user: dict = Depends(get_current_active_user)):
+    """
+    Creates the raw_data and normalized data tables (for example, companies) based on the configuration.
+    """
+    # Create the raw_data table (fixed schema)
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS raw_data (
+                    id SERIAL PRIMARY KEY,
+                    source TEXT NOT NULL,
+                    entity_id TEXT NOT NULL,
+                    data JSONB NOT NULL,
+                    created_at TIMESTAMP DEFAULT NOW()
+                );
+            """)
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_raw_data_entity_id ON raw_data (entity_id);"
+            )
+            conn.commit()
+
+    # Generate SQL for creating the normalized data table from configuration
+    local_config = load_entity_config()
+    entity_name = local_config.entity_name or "entity"
+    # Form the table name, for example "companies" for entity "company"
+    normalized_table = f"{entity_name}s"
+    # Ensure the identifier is present
+    columns = ["entity_id TEXT"]
+    for field_name in local_config.fields.keys():
+        columns.append(f"{field_name} TEXT")
+    if local_config.vector_settings:
+        # Here, the fixed dimension for the text-embedding-ada-002 model; can be parameterized
+        columns.append("vector VECTOR(1536)")
+    create_table_sql = f"""
+        CREATE TABLE IF NOT EXISTS {normalized_table} (
+            id SERIAL PRIMARY KEY,
+            {', '.join(columns)}
+        );
+    """
+    # Indexes: to speed up search by entity_id and by vector (if available)
+    index_entity_sql = f"""
+        CREATE INDEX IF NOT EXISTS idx_{normalized_table}_entity_id ON {normalized_table} (entity_id);
+        """
+    index_vector_sql = ""
+    if local_config.vector_settings:
+        index_vector_sql = f"""
+        CREATE INDEX IF NOT EXISTS idx_{normalized_table}_vector ON {normalized_table} USING ivfflat (vector);
+        """
+
+    # Execute the creation of the normalized data table
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(create_table_sql)
+            cur.execute(index_entity_sql)
+            if index_vector_sql:
+                cur.execute(index_vector_sql)
+            conn.commit()
+
+    return {"message": "Tables created successfully based on configuration"}

@@ -1,8 +1,6 @@
 """
 Module containing data models used across the project.
 """
-
-from pydantic import BaseModel
 from typing import List, Optional
 from pydantic import BaseModel, Field
 
@@ -15,6 +13,9 @@ class EntityData(BaseModel):
     data: dict
 
 class EntityNormalizedData(BaseModel):
+    """
+    Represents a normalized entity with specific fields and an optional search vector.
+    """
     entity_id: str = Field(..., description="Entity identifier")
     name: str = Field(..., description="Entity name")
     industry: Optional[str] = Field(None, description="Industry")
