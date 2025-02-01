@@ -415,6 +415,24 @@ def search_companies(
     """
     Endpoint for searching companies using the vector representation of the query.
     """
+    # Check if companies table exists first
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                SELECT EXISTS (
+                    SELECT FROM pg_tables 
+                    WHERE schemaname = 'public' 
+                    AND tablename = '{POSTGRES_DB}'
+                );
+            """)
+            table_exists = cur.fetchone()[0]
+            
+            if not table_exists:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Companies table does not exist. Please create tables first."
+                )
+
     vector = get_embedding(query)
     # Convert the vector to a list of float32 values
     vector = np.array(vector, dtype=np.float32).tolist()
