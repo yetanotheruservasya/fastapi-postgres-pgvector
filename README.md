@@ -36,14 +36,26 @@ cd fastapi-postgres-pgvector
 ```bash
 cp .env.example .env
 ```
-Then open `.env` and set your values.
+Required environment variables:
+- `POSTGRES_*`: Database credentials
+- `OPENAI_API_KEY`: Your OpenAI API key
+- `SECRET_KEY`: JWT secret key
+- `ADMIN_USERNAME`: Admin login
+- `ADMIN_PASSWORD`: Admin password
+- `ADMIN_EMAIL`: Admin email
 
 ### 3️⃣ **Start the System**
 ```bash
 docker-compose up -d
 ```
 
-### 4️⃣ **Verify Everything is Working**
+### 4️⃣ **Initialize the Database**
+```bash
+curl -X POST "http://localhost:8000/admin/create_database" -H "Authorization: Bearer YOUR_TOKEN"
+curl -X POST "http://localhost:8000/admin/create_tables" -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+### 5️⃣ **Verify Everything is Working**
 - **API:** [http://localhost:8000/docs](http://localhost:8000/docs)
 - **pgAdmin:** [http://localhost:5050](http://localhost:5050)  
   - **Login:** `admin@example.com`  
@@ -51,19 +63,108 @@ docker-compose up -d
 
 ---
 
+## 🔧 **Configuration Parameters**
+
+### Environment Variables
+
+#### Database Configuration
+- `POSTGRES_HOST`: Database host (default: "db")
+- `POSTGRES_USER`: Database username
+- `POSTGRES_PASSWORD`: Database password
+- `POSTGRES_DB`: Main database name
+- `ANOTHER_DB`: Additional database name (optional)
+
+#### pgAdmin Configuration
+- `PGADMIN_DEFAULT_EMAIL`: Admin email for pgAdmin interface
+- `PGADMIN_DEFAULT_PASSWORD`: Admin password for pgAdmin
+- `PGADMIN_LISTEN_PORT`: Port for pgAdmin (default: 5050)
+- `PGADMIN_LISTEN_ADDRESS`: Listen address (default: 0.0.0.0)
+
+#### API Security
+- `SECRET_KEY`: JWT secret key for token generation
+- `ADMIN_USERNAME`: Admin username for API access
+- `ADMIN_PASSWORD`: Admin password for API access
+- `ADMIN_FULL_NAME`: Admin's full name
+- `ADMIN_EMAIL`: Admin's email address
+
+#### OpenAI Integration
+- `OPENAI_API_KEY`: Your OpenAI API key for embeddings generation
+
+#### File Paths
+- `ENTITY_CONFIG_FILE`: Path to entity configuration JSON file
+
+### Entity Configuration (entity_config.json)
+
+```json
+{
+  "entity_name": "company",
+  "fields": {
+    "name": {
+      "source_field": "data.name",
+      "required": true
+    },
+    "description": {
+      "source_field": "data.description",
+      "required": false
+    }
+  },
+  "vector_settings": {
+    "vector_field": "description"
+  }
+}
+```
+
+#### Configuration Fields
+- `entity_name`: Name of the entity (used for table naming)
+- `fields`: Mapping of target fields to source data paths
+  - `source_field`: JSON path to source data
+  - `required`: Whether the field is required
+- `vector_settings`: Configuration for vector embeddings
+  - `vector_field`: Field to use for generating embeddings
+
+---
+
+## 🔐 **Authentication**
+
+1. **Get Access Token**
+```bash
+curl -X POST "http://localhost:8000/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "username=your_username&password=your_password"
+```
+
+2. **Use Token in Requests**
+```bash
+curl -X POST "http://localhost:8000/store" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"your": "data"}'
+```
+
 ## 📡 **API Endpoints**
 
-| Method  | URL                         | Description                                |
-|---------|-----------------------------|--------------------------------------------|
-| **POST** | `/store`                     | Save company JSONB data                    |
-| **POST** | `/normalize/{company_id}`    | Normalize company data                     |
-| **GET**  | `/search?query=...`          | Search for companies via vector embedding  |
+### Data Operations
+| Method   | URL                         | Description                                |
+|----------|-----------------------------|--------------------------------------------|
+| **POST** | `/store`                   | Save company JSONB data                    |
+| **POST** | `/normalize/{company_id}`  | Normalize company data                     |
+| **GET**  | `/search?query=...`        | Search for companies via vector embedding  |
+
+### Admin Operations
+| Method     | URL                         | Description                           |
+|------------|----------------------------|---------------------------------------|
+| **POST**   | `/admin/create_database`   | Initialize database                   |
+| **POST**   | `/admin/create_tables`     | Create required tables                |
+| **DELETE** | `/admin/delete_data`       | Clear all data from tables            |
+| **DELETE** | `/admin/delete_tables`     | Drop all tables                       |
+| **DELETE** | `/admin/delete_database`   | Delete entire database                |
 
 ---
 
 ## 🛠 **Technologies**
 - Python 3.12 + FastAPI
 - PostgreSQL 16 + pgVector
+- JWT Authentication
 - Docker + Docker Compose
 - pgAdmin 4
 - OpenAI API (for embeddings)

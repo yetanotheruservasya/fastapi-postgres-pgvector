@@ -293,18 +293,18 @@ def store_data(
     Endpoint for saving entity data (JSONB) to the database.
     Stores raw data without performing normalization.
     """
-    # Здесь мы не будем проводить нормализацию, а сохраняем сырые данные,
-    # используя только поля, определённые в модели EntityData.
-    data_to_insert = entity.model_dump()  # Это должно дать словарь с ключами: source, entity_id, data
+    # Here we won't perform normalization, but save raw data
+    # using only fields defined in the EntityData model
+    data_to_insert = entity.model_dump()  # This should give a dict with keys: source, entity_id, data
 
-    # Если вдруг в data_to_insert есть какие-либо значения, которые являются dict или list,
-    # преобразуем их в JSON-строки (для корректного сохранения в колонку JSONB).
+    # If there are any values in data_to_insert that are dict or list,
+    # convert them to JSON strings (for correct storage in JSONB column)
     for key, val in data_to_insert.items():
         if isinstance(val, (dict, list)):
             data_to_insert[key] = json.dumps(val)
 
-    # Формируем динамически SQL-запрос для вставки данных в таблицу raw_data.
-    # Таблица raw_data имеет фиксированную схему: source, entity_id, data.
+    # Dynamically form SQL query to insert data into raw_data table.
+    # The raw_data table has a fixed schema: source, entity_id, data.
     columns = list(data_to_insert.keys())
     values = list(data_to_insert.values())
     columns_str = ', '.join(columns)
@@ -333,19 +333,19 @@ def normalize_data(
     entity_config = load_entity_config()
     normalized_table = get_normalized_table_name(entity_config.entity_name)
 
-    # Извлекаем сырые данные и entity_id из таблицы raw_data
+    # Extract raw data and entity_id from raw_data table
     with get_db() as conn:
         with conn.cursor() as cur:
-            # Извлекаем как data, так и entity_id (из таблицы raw_data)
+            # Extract both data and entity_id (from raw_data table)
             cur.execute("SELECT data, entity_id FROM raw_data WHERE entity_id = %s", (entity_id,))
             row = cur.fetchone()
             if not row:
                 raise HTTPException(status_code=404, detail="Entity not found in raw_data")
             raw_data_str, stored_entity_id = row
 
-    # Преобразуем данные из базы.
-    # Если полученное значение уже является словарём, используем его напрямую,
-    # иначе пытаемся десериализовать строку.
+    # Transform data from database.
+    # If the received value is already a dictionary, use it directly,
+    # otherwise try to deserialize the string
     if isinstance(raw_data_str, dict):
         raw_data = raw_data_str
     else:
