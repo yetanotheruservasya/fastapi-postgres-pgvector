@@ -2,15 +2,15 @@
     "entity_name": "company",
     "fields": {
         "name": {
-            "source_field": "data.name",
+            "source_field": "name",
             "required": true
         },
         "industry": {
-            "source_field": "data.industry",
+            "source_field": "industries",
             "required": false
         },
         "description": {
-            "source_field": "data.description",
+            "source_field": "description",
             "required": false,
             "vectorize": true
         }
