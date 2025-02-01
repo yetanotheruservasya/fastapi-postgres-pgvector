@@ -343,11 +343,16 @@ def normalize_data(
                 raise HTTPException(status_code=404, detail="Entity not found in raw_data")
             raw_data_str, stored_entity_id = row
 
-    # Преобразуем JSON-строку обратно в словарь
-    try:
-        raw_data = json.loads(raw_data_str)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error decoding raw data: {e}")
+    # Преобразуем данные из базы.
+    # Если полученное значение уже является словарём, используем его напрямую,
+    # иначе пытаемся десериализовать строку.
+    if isinstance(raw_data_str, dict):
+        raw_data = raw_data_str
+    else:
+        try:
+            raw_data = json.loads(raw_data_str)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error decoding raw data: {e}")
 
     # Нормализуем данные согласно конфигурации
     normalized_data = {}
@@ -377,7 +382,7 @@ def normalize_data(
         else:
             logging.warning("No value found for vectorization in field '%s'", vector_field)
 
-    # Валидируем нормализованные данные по модели EntityNormalizedData
+    # Использование модели EntityNormalizedData для валидации нормализованных данных
     try:
         normalized_entity = EntityNormalizedData(**normalized_data)
     except Exception as e:
