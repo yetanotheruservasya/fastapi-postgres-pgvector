@@ -330,17 +330,25 @@ def normalize_data(
     Endpoint for normalizing entity data.
     Available only to authenticated users.
     """
-    # Загружаем конфигурацию сущности
+    # Load the entity configuration
     entity_config = load_entity_config()
     normalized_table = get_normalized_table_name(entity_config.entity_name)
 
+    # Извлекаем сырые данные и entity_id из таблицы raw_data
     with get_db() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT data FROM raw_data WHERE entity_id = %s", (entity_id,))
+            # Извлекаем как data, так и entity_id (из таблицы raw_data)
+            cur.execute("SELECT data, entity_id FROM raw_data WHERE entity_id = %s", (entity_id,))
             row = cur.fetchone()
             if not row:
                 raise HTTPException(status_code=404, detail="Entity not found in raw_data")
-            raw_data = row[0]
+            raw_data_str, stored_entity_id = row
+
+    # Преобразуем JSON-строку обратно в словарь
+    try:
+        raw_data = json.loads(raw_data_str)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error decoding raw data: {e}")
 
     # Нормализуем данные согласно конфигурации
     normalized_data = {}
@@ -356,9 +364,13 @@ def normalize_data(
             )
         normalized_data[field_name] = value
 
-    # Векторизация (если задана в конфигурации)
+    # Добавляем обязательное поле entity_id, если его нет
+    if "entity_id" not in normalized_data or not normalized_data["entity_id"]:
+        normalized_data["entity_id"] = stored_entity_id
+
+    # Интеграция векторизации, если настройки заданы в конфигурации
     if entity_config.vector_settings:
-        vector_field = entity_config.vector_settings.vector_field
+        vector_field = entity_config.vector_settings.vector_field  # имя поля для векторизации
         text_for_vector = normalized_data.get(vector_field)
         if text_for_vector:
             vector = get_embedding(text_for_vector)
@@ -366,7 +378,7 @@ def normalize_data(
         else:
             logging.warning("No value found for vectorization in field '%s'", vector_field)
 
-    # Валидируем данные по модели нормализованных данных
+    # Валидируем нормализованные данные по модели EntityNormalizedData
     try:
         normalized_entity = EntityNormalizedData(**normalized_data)
     except Exception as e:
@@ -375,7 +387,7 @@ def normalize_data(
             detail=f"Validation error in normalized data: {e}"
         ) from e
 
-    # Динамическая вставка нормализованных данных в вычисляемую таблицу
+    # Динамическая вставка нормализованных данных в таблицу нормализованных сущностей
     data_to_insert = normalized_entity.model_dump()
     columns = list(data_to_insert.keys())
     values = list(data_to_insert.values())
