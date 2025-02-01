@@ -291,36 +291,20 @@ def store_data(
 ):
     """
     Endpoint for saving entity data (JSONB) to the database.
+    Stores raw data without performing normalization.
     """
-    # Load the entity configuration
-    entity_config = load_entity_config()
+    # Здесь мы не будем проводить нормализацию, а сохраняем сырые данные,
+    # используя только поля, определённые в модели EntityData.
+    data_to_insert = entity.model_dump()  # Это должно дать словарь с ключами: source, entity_id, data
 
-    normalized_data = {}
-    # Check required fields according to configuration and prepare normalized data
-    for field_name, field_conf in entity_config.fields.items():
-        value = extract_field(entity.data, field_conf.source_field)
-        if field_conf.required and value is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    f"Missing required field: '{field_name}' "
-                    f"(expected at '{field_conf.source_field}')"
-                )
-            )
-        normalized_data[field_name] = value
-
-    # Use the full model dump so that all EntityData values are saved,
-    # and update/merge with normalized data.
-    data_to_insert = entity.model_dump()
-    data_to_insert.update(normalized_data)
-
-    # Convert any dictionary or list values to JSON strings,
-    # so that psycopg2 can adapt them properly.
+    # Если вдруг в data_to_insert есть какие-либо значения, которые являются dict или list,
+    # преобразуем их в JSON-строки (для корректного сохранения в колонку JSONB).
     for key, val in data_to_insert.items():
         if isinstance(val, (dict, list)):
             data_to_insert[key] = json.dumps(val)
 
-    # Dynamically build the SQL query for inserting data
+    # Формируем динамически SQL-запрос для вставки данных в таблицу raw_data.
+    # Таблица raw_data имеет фиксированную схему: source, entity_id, data.
     columns = list(data_to_insert.keys())
     values = list(data_to_insert.values())
     columns_str = ', '.join(columns)
@@ -335,6 +319,7 @@ def store_data(
             conn.commit()
 
     return {"message": "Data stored successfully"}
+
 
 @app.post("/normalize/{entity_id}")
 def normalize_data(
