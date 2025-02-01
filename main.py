@@ -296,7 +296,7 @@ def store_data(
     entity_config = load_entity_config()
 
     normalized_data = {}
-    # Check for required fields based on configuration and prepare normalized data
+    # Check required fields according to configuration and prepare normalized data
     for field_name, field_conf in entity_config.fields.items():
         value = extract_field(entity.data, field_conf.source_field)
         if field_conf.required and value is None:
@@ -309,20 +309,23 @@ def store_data(
             )
         normalized_data[field_name] = value
 
-    # Instead of explicitly specifying the 'source' and 'entity_id' fields,
-    # use the full model dump from entity so that all EntityData values are saved.
+    # Use the full model dump so that all EntityData values are saved,
+    # and update/merge with normalized data.
     data_to_insert = entity.model_dump()
-    # Update/merge normalized data (it may override corresponding fields if necessary)
     data_to_insert.update(normalized_data)
 
-    # Generate the dynamic SQL query for inserting data
+    # Convert any dictionary or list values to JSON strings,
+    # so that psycopg2 can adapt them properly.
+    for key, val in data_to_insert.items():
+        if isinstance(val, (dict, list)):
+            data_to_insert[key] = json.dumps(val)
+
+    # Dynamically build the SQL query for inserting data
     columns = list(data_to_insert.keys())
     values = list(data_to_insert.values())
     columns_str = ', '.join(columns)
     placeholders = ', '.join(['%s'] * len(values))
-    sql = (
-        f"INSERT INTO raw_data ({columns_str}) VALUES ({placeholders})"
-    )
+    sql = f"INSERT INTO raw_data ({columns_str}) VALUES ({placeholders})"
 
     logging.info("Storing data for entity: %s", data_to_insert)
 
