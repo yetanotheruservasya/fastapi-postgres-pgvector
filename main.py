@@ -528,7 +528,38 @@ def create_database(current_user: dict = Depends(get_current_active_user)):
 def create_tables(current_user: dict = Depends(get_current_active_user)):
     """
     Creates the raw_data and normalized data tables (for example, companies) based on the configuration.
+    First creates the pgvector extension if needed.
     """
+    # Create pgvector extension first
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Create vector extension if not exists
+            cur.execute("""
+                CREATE EXTENSION IF NOT EXISTS vector;
+            """)
+            conn.commit()
+            
+            # Create the raw_data table (fixed schema)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS raw_data (
+                    id SERIAL PRIMARY KEY,
+                    source TEXT NOT NULL,
+                    entity_id TEXT NOT NULL,
+                    data JSONB NOT NULL,
+                    created_at TIMESTAMP DEFAULT NOW()
+                );
+            """)
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_raw_data_entity_id ON raw_data (entity_id);"
+            )
+            conn.commit()
+
+    # Generate SQL for creating the normalized data table from configuration
+    local_config = load_entity_config()
+    entity_name = local_config.entity_name or "entity"
+    normalized_table = f"{entity_name}s"
+    
+    # Rest of the function remains the same
     # Create the raw_data table (fixed schema)
     with get_db() as conn:
         with conn.cursor() as cur:
