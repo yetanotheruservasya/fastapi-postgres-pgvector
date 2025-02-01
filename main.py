@@ -112,6 +112,15 @@ def extract_field(data: dict, field_path: str):
             return None
     return value
 
+def get_normalized_table_name(entity_name: str) -> str:
+    """
+    Forms a table name for normalized data based on the entity name.
+    If the name ends with 'y', replaces 'y' with 'ies', otherwise adds 's'.
+    """
+    if entity_name.endswith("y"):
+        return entity_name[:-1] + "ies"
+    return entity_name + "s"
+
 @contextmanager
 def get_db():
     """
@@ -195,7 +204,7 @@ def generate_description(entity_text: str) -> str:
         messages=[
             {
                 "role": "system",
-                "content": "You are an AI assistant that summarizes company information."
+                "content": "You are an AI assistant that summarizes entity information."
             },
             {"role": "user", "content": prompt}
         ]
@@ -324,36 +333,28 @@ def store_data(
 
     return {"message": "Data stored successfully"}
 
-@app.post("/normalize/{company_id}")
+@app.post("/normalize/{entity_id}")
 def normalize_data(
-    company_id: str,
+    entity_id: str,
     current_user: dict = Depends(get_current_active_user)
 ):
     """
-    Endpoint for normalizing company data.
+    Endpoint for normalizing entity data.
     Available only to authenticated users.
     """
-    # Load the entity configuration
+    # Загружаем конфигурацию сущности
     entity_config = load_entity_config()
+    normalized_table = get_normalized_table_name(entity_config.entity_name)
 
     with get_db() as conn:
         with conn.cursor() as cur:
-            # Use the universal field entity_id; in this case, it is the company identifier
-            cur.execute("SELECT data FROM raw_data WHERE entity_id = %s", (company_id,))
+            cur.execute("SELECT data FROM raw_data WHERE entity_id = %s", (entity_id,))
             row = cur.fetchone()
             if not row:
-                raise HTTPException(status_code=404, detail="Company not found in raw_data")
+                raise HTTPException(status_code=404, detail="Entity not found in raw_data")
             raw_data = row[0]
 
-    # 1. Check for the presence of the company identifier in raw_data.
-    #    It is assumed that the raw_data schema includes the key "company_id".
-    if "company_id" not in raw_data:
-        raise HTTPException(
-            status_code=400,
-            detail="Company identifier ('company_id') is missing in raw_data"
-        )
-
-    # 2. Normalize data based on the configuration.
+    # Нормализуем данные согласно конфигурации
     normalized_data = {}
     for field_name, field_conf in entity_config.fields.items():
         value = extract_field(raw_data, field_conf.source_field)
@@ -367,13 +368,9 @@ def normalize_data(
             )
         normalized_data[field_name] = value
 
-    # If for some reason normalized_data does not contain company_id, add it from raw_data
-    if "company_id" not in normalized_data or not normalized_data["company_id"]:
-        normalized_data["company_id"] = raw_data.get("company_id")
-
-    # 3. Vectorization integration, if settings are provided in the configuration.
-    if config.vector_settings:
-        vector_field = config.vector_settings.vector_field  # field name for vectorization
+    # Векторизация (если задана в конфигурации)
+    if entity_config.vector_settings:
+        vector_field = entity_config.vector_settings.vector_field
         text_for_vector = normalized_data.get(vector_field)
         if text_for_vector:
             vector = get_embedding(text_for_vector)
@@ -381,24 +378,22 @@ def normalize_data(
         else:
             logging.warning("No value found for vectorization in field '%s'", vector_field)
 
-    # 4. Validate the normalized data using the EntityNormalizedData model.
+    # Валидируем данные по модели нормализованных данных
     try:
-        normalized_company = EntityNormalizedData(**normalized_data)
+        normalized_entity = EntityNormalizedData(**normalized_data)
     except Exception as e:
         raise HTTPException(
             status_code=400,
             detail=f"Validation error in normalized data: {e}"
         ) from e
 
-    # 5. Dynamically insert the normalized data into the companies table.
-    data_to_insert = normalized_company.model_dump()
+    # Динамическая вставка нормализованных данных в вычисляемую таблицу
+    data_to_insert = normalized_entity.model_dump()
     columns = list(data_to_insert.keys())
     values = list(data_to_insert.values())
     columns_str = ', '.join(columns)
     placeholders = ', '.join(['%s'] * len(values))
-    sql = (
-        f"INSERT INTO companies ({columns_str}) VALUES ({placeholders})"
-    )
+    sql = f"INSERT INTO {normalized_table} ({columns_str}) VALUES ({placeholders})"
 
     with get_db() as conn:
         with conn.cursor() as cur:
@@ -409,36 +404,37 @@ def normalize_data(
 
 @app.get("/search")
 def search_companies(
-        query: str,
-        current_user: dict = Depends(get_current_active_user)
-    ):
+    query: str,
+    current_user: dict = Depends(get_current_active_user)
+):
     """
-    Endpoint for searching companies using the vector representation of the query.
+    Endpoint for searching entities using the vector representation of the query.
     """
-    # Check if companies table exists first
+    # Получаем имя нормализованной таблицы из конфигурации
+    local_config = load_entity_config()
+    normalized_table = get_normalized_table_name(local_config.entity_name)
+
+    # Проверка существования нормализованной таблицы
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(f"""
                 SELECT EXISTS (
                     SELECT FROM pg_tables 
                     WHERE schemaname = 'public' 
-                    AND tablename = '{POSTGRES_DB}'
+                    AND tablename = %s
                 );
-            """)
+            """, (normalized_table,))
             table_exists = cur.fetchone()[0]
-            
             if not table_exists:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Companies table does not exist. Please create tables first."
+                    detail=f"{normalized_table} table does not exist. Please create tables first."
                 )
 
     vector = get_embedding(query)
-    # Convert the vector to a list of float32 values
+    # Приводим вектор к списку float32
     vector = np.array(vector, dtype=np.float32).tolist()
-    query_sql = (
-        "SELECT * FROM companies ORDER BY vector <-> %s::vector LIMIT 5"
-    )
+    query_sql = f"SELECT * FROM {normalized_table} ORDER BY vector <-> %s::vector LIMIT 5"
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(query_sql, (json.dumps(vector),))
@@ -489,19 +485,18 @@ def delete_data(current_user: dict = Depends(get_current_active_user)):
 @app.delete("/admin/delete_tables")
 def delete_tables(current_user: dict = Depends(get_current_active_user)):
     """
-    Drops the raw_data and normalized tables (for example, companies) from the database.
+    Drops the raw_data and normalized tables from the database.
     """
+    # Получаем имя нормализованной таблицы из конфигурации
+    local_config = load_entity_config()
+    normalized_table = get_normalized_table_name(local_config.entity_name)
+
     with get_db() as conn:
         with conn.cursor() as cur:
-            # If the tables depend on each other, CASCADE can be used
-            cur.execute(
-                "DROP TABLE IF EXISTS raw_data CASCADE;"
-            )
-            cur.execute(
-                "DROP TABLE IF EXISTS companies CASCADE;"
-            )
+            cur.execute("DROP TABLE IF EXISTS raw_data CASCADE;")
+            cur.execute(f"DROP TABLE IF EXISTS {normalized_table} CASCADE;")
             conn.commit()
-    return {"message": "Tables raw_data and companies dropped successfully"}
+    return {"message": f"Tables raw_data and {normalized_table} dropped successfully"}
 
 @app.delete("/admin/delete_database")
 def delete_database(current_user: dict = Depends(get_current_active_user)):
@@ -556,19 +551,13 @@ def create_database(current_user: dict = Depends(get_current_active_user)):
 @app.post("/admin/create_tables")
 def create_tables(current_user: dict = Depends(get_current_active_user)):
     """
-    Creates the raw_data and normalized data tables (for example, companies) based on the configuration.
+    Creates the raw_data and normalized data tables based on the configuration.
     First creates the pgvector extension if needed.
     """
-    # Create pgvector extension first
+    # Создание расширения pgvector и таблицы raw_data (фиксированная схема)
     with get_db() as conn:
         with conn.cursor() as cur:
-            # Create vector extension if not exists
-            cur.execute("""
-                CREATE EXTENSION IF NOT EXISTS vector;
-            """)
-            conn.commit()
-            
-            # Create the raw_data table (fixed schema)
+            cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS raw_data (
                     id SERIAL PRIMARY KEY,
@@ -578,45 +567,17 @@ def create_tables(current_user: dict = Depends(get_current_active_user)):
                     created_at TIMESTAMP DEFAULT NOW()
                 );
             """)
-            cur.execute(
-                "CREATE INDEX IF NOT EXISTS idx_raw_data_entity_id ON raw_data (entity_id);"
-            )
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_raw_data_entity_id ON raw_data (entity_id);")
             conn.commit()
 
-    # Generate SQL for creating the normalized data table from configuration
+    # Генерация SQL для создания нормализованной таблицы на основе конфигурации
     local_config = load_entity_config()
-    entity_name = local_config.entity_name or "entity"
-    normalized_table = f"{entity_name}s"
-    
-    # Rest of the function remains the same
-    # Create the raw_data table (fixed schema)
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS raw_data (
-                    id SERIAL PRIMARY KEY,
-                    source TEXT NOT NULL,
-                    entity_id TEXT NOT NULL,
-                    data JSONB NOT NULL,
-                    created_at TIMESTAMP DEFAULT NOW()
-                );
-            """)
-            cur.execute(
-                "CREATE INDEX IF NOT EXISTS idx_raw_data_entity_id ON raw_data (entity_id);"
-            )
-            conn.commit()
-
-    # Generate SQL for creating the normalized data table from configuration
-    local_config = load_entity_config()
-    entity_name = local_config.entity_name or "entity"
-    # Form the table name, for example "companies" for entity "company"
-    normalized_table = f"{entity_name}s"
-    # Ensure the identifier is present
-    columns = ["entity_id TEXT"]
+    normalized_table = get_normalized_table_name(local_config.entity_name)
+    columns = ["entity_id TEXT"]  # обязательное поле идентификатора
     for field_name in local_config.fields.keys():
         columns.append(f"{field_name} TEXT")
     if local_config.vector_settings:
-        # Here, the fixed dimension for the text-embedding-ada-002 model; can be parameterized
+        # Фиксированная размерность для модели text-embedding-ada-002, можно параметризовать
         columns.append("vector VECTOR(1536)")
     create_table_sql = f"""
         CREATE TABLE IF NOT EXISTS {normalized_table} (
@@ -624,17 +585,11 @@ def create_tables(current_user: dict = Depends(get_current_active_user)):
             {', '.join(columns)}
         );
     """
-    # Indexes: to speed up search by entity_id and by vector (if available)
-    index_entity_sql = f"""
-        CREATE INDEX IF NOT EXISTS idx_{normalized_table}_entity_id ON {normalized_table} (entity_id);
-        """
+    index_entity_sql = f"CREATE INDEX IF NOT EXISTS idx_{normalized_table}_entity_id ON {normalized_table} (entity_id);"
     index_vector_sql = ""
     if local_config.vector_settings:
-        index_vector_sql = f"""
-        CREATE INDEX IF NOT EXISTS idx_{normalized_table}_vector ON {normalized_table} USING ivfflat (vector);
-        """
+        index_vector_sql = f"CREATE INDEX IF NOT EXISTS idx_{normalized_table}_vector ON {normalized_table} USING ivfflat (vector);"
 
-    # Execute the creation of the normalized data table
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(create_table_sql)
