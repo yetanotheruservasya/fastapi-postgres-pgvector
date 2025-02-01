@@ -507,15 +507,21 @@ def create_database(current_user: dict = Depends(get_current_active_user)):
     """
     Creates the database if it does not exist.
     """
-    with get_super_db_connection() as conn:
+    conn = get_super_db_connection()
+    try:
+        # Set autocommit to True to execute CREATE DATABASE
+        conn.set_session(autocommit=True)
+        
         with conn.cursor() as cur:
             cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (POSTGRES_DB,))
             if not cur.fetchone():
                 cur.execute(
-                    f"CREATE DATABASE {POSTGRES_DB} OWNER {POSTGRES_USER} "
-                    "ENCODING 'UTF8';"
+                    f"CREATE DATABASE {POSTGRES_DB} "
+                    f"OWNER {POSTGRES_USER} ENCODING 'UTF8'"
                 )
-                conn.commit()
+    finally:
+        conn.close()
+    
     return {"message": f"Database {POSTGRES_DB} created successfully (if it did not exist)"}
 
 @app.post("/admin/create_tables")
