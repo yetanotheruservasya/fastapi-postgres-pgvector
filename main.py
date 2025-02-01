@@ -320,7 +320,6 @@ def store_data(
 
     return {"message": "Data stored successfully"}
 
-
 @app.post("/normalize/{entity_id}")
 def normalize_data(
     entity_id: str,
