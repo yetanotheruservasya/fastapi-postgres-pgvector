@@ -1,0 +1,22 @@
+{
+    "entity_name": "company",
+    "fields": {
+        "name": {
+            "source_field": "name",
+            "required": true
+        },
+        "industry": {
+            "source_field": "industries",
+            "required": false
+        },
+        "description": {
+            "source_field": "description",
+            "required": false,
+            "vectorize": true
+        }
+    },
+    "vector_settings": {
+        "vector_field": "description",
+        "model": "text-embedding-ada-002"
+    }
+}

@@ -3,6 +3,9 @@ This module implements the main API,
 handling authentication, OpenAI communications, and database operations.
 """
 
+# =====================
+# Imports and Global Setup
+# =====================
 import os
 import json
 import logging
@@ -18,7 +21,9 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 from dotenv import load_dotenv
 from openai import OpenAI
-from models import CompanyData  # Import the CompanyData model
+
+from models.main_models import EntityData, EntityNormalizedData
+from models.config_models import EntityConfig
 
 # Load environment variables and configure logging
 load_dotenv()
@@ -34,7 +39,11 @@ POSTGRES_USER = os.getenv("POSTGRES_USER", "---")
 POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "---")
 POSTGRES_DB = os.getenv("POSTGRES_DB", "---")
 POSTGRES_HOST = os.getenv("POSTGRES_HOST", "---")
-DATABASE_URL = f"dbname={POSTGRES_DB} user={POSTGRES_USER} password={POSTGRES_PASSWORD} host={POSTGRES_HOST}"
+# Break long DATABASE_URL assignment into multiple lines
+DATABASE_URL = (
+    f"dbname={POSTGRES_DB} user={POSTGRES_USER} "
+    f"password={POSTGRES_PASSWORD} host={POSTGRES_HOST}"
+)
 
 # Password hashing settings
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -57,9 +66,95 @@ fake_users_db: Dict[str, Dict[str, Any]] = {
     }
 }
 
+ENTITY_CONFIG_FILE = os.getenv("ENTITY_CONFIG_FILE", "---")
+
 app = FastAPI()
 
-# --- Working with OpenAI ---
+# =====================
+# Utility Functions
+# =====================
+
+def load_entity_config(config_path: str = ENTITY_CONFIG_FILE) -> EntityConfig:
+    """
+    Load and validate entity configuration from a JSON file.
+
+    Args:
+        config_path (str): Path to the configuration file. Defaults to ENTITY_CONFIG_FILE.
+
+    Returns:
+        EntityConfig: Validated configuration object.
+
+    Raises:
+        FileNotFoundError: If configuration file does not exist.
+    """
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"Configuration file {config_path} not found")
+    with open(config_path, "r", encoding="utf-8") as f:
+        raw_config = json.load(f)
+    # Create the EntityConfig object; validation happens here
+    entity_config = EntityConfig.model_validate(raw_config)
+    return entity_config
+
+def extract_field(data: dict, field_path: str):
+    """
+    Extracts the value from a nested dictionary using a dot-separated path.
+    
+    For example, given data = {"data": {"name": "Acme Corp"}} and field_path = "data.name",
+    it returns "Acme Corp".
+    """
+    keys = field_path.split(".")
+    value = data
+    for key in keys:
+        if not isinstance(value, dict):
+            return None
+        value = value.get(key)
+        if value is None:
+            return None
+    return value
+
+def get_normalized_table_name(entity_name: str) -> str:
+    """
+    Forms a table name for normalized data based on the entity name.
+    If the name ends with 'y', replaces 'y' with 'ies', otherwise adds 's'.
+    """
+    if entity_name.endswith("y"):
+        return entity_name[:-1] + "ies"
+    return entity_name + "s"
+
+@contextmanager
+def get_db():
+    """
+    Context manager for connecting to the database.
+    """
+    conn = psycopg2.connect(DATABASE_URL)
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+# Function to obtain a super connection to the postgres database (for creating/deleting databases)
+def get_super_db_connection():
+    """
+    Returns a connection to the 'postgres' database for administrative operations.
+    """
+    conn = psycopg2.connect(
+        dbname="postgres",
+        user=POSTGRES_USER,
+        password=POSTGRES_PASSWORD,
+        host=POSTGRES_HOST
+    )
+    return conn
+
+try:
+    config = load_entity_config()
+    logging.info("Loaded entity config: %s", config.json())
+except Exception as e:
+    logging.error("Error loading entity config: %s", e)
+    raise e
+
+# =====================
+# OpenAI Integration
+# =====================
 
 class OpenAIClientSingleton:
     """
@@ -109,14 +204,16 @@ def generate_description(entity_text: str) -> str:
         messages=[
             {
                 "role": "system",
-                "content": "You are an AI assistant that summarizes company information."
+                "content": "You are an AI assistant that summarizes entity information."
             },
             {"role": "user", "content": prompt}
         ]
     )
     return response.choices[0].message.content
 
-# --- Authentication and JWT ---
+# =====================
+# Authentication and JWT
+# =====================
 
 def authenticate_user(username: str, password: str) -> Any:
     """
@@ -183,71 +280,130 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     access_token = create_access_token(data={"sub": user["username"]})
     return {"access_token": access_token, "token_type": "bearer"}
 
-# --- Working with the database ---
-
-@contextmanager
-def get_db():
-    """
-    Context manager for connecting to the database.
-    """
-    conn = psycopg2.connect(DATABASE_URL)
-    try:
-        yield conn
-    finally:
-        conn.close()
+# =====================
+# API Endpoints
+# =====================
 
 @app.post("/store")
 def store_data(
-        company: CompanyData,
-        current_user: dict = Depends(get_current_active_user)
-    ):
-    """
-    Endpoint for saving company data (JSONB) to the database.
-    """
-    if not company.source or not company.company_id or not company.data:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Missing required fields: source, company_id, or data"
-        )
-    logging.info(
-        "Storing data for company_id: %s from source: %s",
-        company.company_id,
-        company.source
-    )
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO raw_data (source, company_id, data) VALUES (%s, %s, %s)",
-                (company.source, company.company_id, json.dumps(company.data))
-            )
-            conn.commit()
-    return {"message": "Data stored successfully"}
-
-@app.post("/normalize/{company_id}")
-def normalize_data(
-    company_id: str,
+    entity: EntityData,
     current_user: dict = Depends(get_current_active_user)
 ):
     """
-    Endpoint for normalizing company data.
-    Available only to authenticated users.
+    Endpoint for saving entity data (JSONB) to the database.
+    Stores raw data without performing normalization.
     """
+    # Здесь мы не будем проводить нормализацию, а сохраняем сырые данные,
+    # используя только поля, определённые в модели EntityData.
+    data_to_insert = entity.model_dump()  # Это должно дать словарь с ключами: source, entity_id, data
+
+    # Если вдруг в data_to_insert есть какие-либо значения, которые являются dict или list,
+    # преобразуем их в JSON-строки (для корректного сохранения в колонку JSONB).
+    for key, val in data_to_insert.items():
+        if isinstance(val, (dict, list)):
+            data_to_insert[key] = json.dumps(val)
+
+    # Формируем динамически SQL-запрос для вставки данных в таблицу raw_data.
+    # Таблица raw_data имеет фиксированную схему: source, entity_id, data.
+    columns = list(data_to_insert.keys())
+    values = list(data_to_insert.values())
+    columns_str = ', '.join(columns)
+    placeholders = ', '.join(['%s'] * len(values))
+    sql = f"INSERT INTO raw_data ({columns_str}) VALUES ({placeholders})"
+
+    logging.info("Storing data for entity: %s", data_to_insert)
+
     with get_db() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT data FROM raw_data WHERE company_id = %s", (company_id,))
+            cur.execute(sql, values)
+            conn.commit()
+
+    return {"message": "Data stored successfully"}
+
+@app.post("/normalize/{entity_id}")
+def normalize_data(
+    entity_id: str,
+    current_user: dict = Depends(get_current_active_user)
+):
+    """
+    Endpoint for normalizing entity data.
+    Available only to authenticated users.
+    """
+    # Load the entity configuration
+    entity_config = load_entity_config()
+    normalized_table = get_normalized_table_name(entity_config.entity_name)
+
+    # Извлекаем сырые данные и entity_id из таблицы raw_data
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Извлекаем как data, так и entity_id (из таблицы raw_data)
+            cur.execute("SELECT data, entity_id FROM raw_data WHERE entity_id = %s", (entity_id,))
             row = cur.fetchone()
             if not row:
-                raise HTTPException(status_code=404, detail="Company not found")
-            data = row[0]
-            name = data.get("name")
-            industry = data.get("industry")
-            description = data.get("description", "")
-            vector = get_embedding(description)
-            cur.execute(
-                "INSERT INTO companies (name, industry, description, vector) VALUES (%s, %s, %s, %s)",
-                (name, industry, description, vector)
+                raise HTTPException(status_code=404, detail="Entity not found in raw_data")
+            raw_data_str, stored_entity_id = row
+
+    # Преобразуем данные из базы.
+    # Если полученное значение уже является словарём, используем его напрямую,
+    # иначе пытаемся десериализовать строку.
+    if isinstance(raw_data_str, dict):
+        raw_data = raw_data_str
+    else:
+        try:
+            raw_data = json.loads(raw_data_str)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error decoding raw data: {e}")
+
+    # Нормализуем данные согласно конфигурации
+    normalized_data = {}
+    for field_name, field_conf in entity_config.fields.items():
+        value = extract_field(raw_data, field_conf.source_field)
+        if field_conf.required and value is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Missing required field: '{field_name}' "
+                    f"(expected at '{field_conf.source_field}')"
+                )
             )
+        normalized_data[field_name] = value
+
+    # Добавляем обязательное поле entity_id, если его нет
+    if "entity_id" not in normalized_data or not normalized_data["entity_id"]:
+        normalized_data["entity_id"] = stored_entity_id
+
+    # Интеграция векторизации, если настройки заданы в конфигурации
+    if entity_config.vector_settings:
+        vector_field = entity_config.vector_settings.vector_field  # имя поля для векторизации
+        text_for_vector = normalized_data.get(vector_field)
+        if text_for_vector:
+            vector = get_embedding(text_for_vector)
+            normalized_data["vector"] = vector
+        else:
+            logging.warning("No value found for vectorization in field '%s'", vector_field)
+
+    # Использование модели EntityNormalizedData для валидации нормализованных данных
+    try:
+        normalized_entity = EntityNormalizedData(**normalized_data)
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Validation error in normalized data: {e}"
+        ) from e
+
+    # Динамическая вставка нормализованных данных в таблицу нормализованных сущностей
+    data_to_insert = normalized_entity.model_dump()
+    columns = list(data_to_insert.keys())
+    values = list(data_to_insert.values())
+    columns_str = ', '.join(columns)
+    placeholders = ', '.join(['%s'] * len(values))
+    sql = f"INSERT INTO {normalized_table} ({columns_str}) VALUES ({placeholders})"
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, values)
             conn.commit()
+
     return {"message": "Data normalized successfully"}
 
 @app.get("/search")
@@ -256,17 +412,36 @@ def search_companies(
     current_user: dict = Depends(get_current_active_user)
 ):
     """
-    Endpoint for searching companies using the vector representation of the query.
+    Endpoint for searching entities using the vector representation of the query.
     """
-    vector = get_embedding(query)
-    # Convert the vector to a list of float32 values
-    vector = np.array(vector, dtype=np.float32).tolist()
+    # Получаем имя нормализованной таблицы из конфигурации
+    local_config = load_entity_config()
+    normalized_table = get_normalized_table_name(local_config.entity_name)
+
+    # Проверка существования нормализованной таблицы
     with get_db() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                "SELECT * FROM companies ORDER BY vector <-> %s::vector LIMIT 5",
-                (json.dumps(vector),)
-            )
+            cur.execute(f"""
+                SELECT EXISTS (
+                    SELECT FROM pg_tables 
+                    WHERE schemaname = 'public' 
+                    AND tablename = %s
+                );
+            """, (normalized_table,))
+            table_exists = cur.fetchone()[0]
+            if not table_exists:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"{normalized_table} table does not exist. Please create tables first."
+                )
+
+    vector = get_embedding(query)
+    # Приводим вектор к списку float32
+    vector = np.array(vector, dtype=np.float32).tolist()
+    query_sql = f"SELECT * FROM {normalized_table} ORDER BY vector <-> %s::vector LIMIT 5"
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(query_sql, (json.dumps(vector),))
             column_names = [desc[0] for desc in cur.description]
             results = cur.fetchall()
 
@@ -278,3 +453,153 @@ def search_companies(
         entity_data["enhanced_description"] = enhanced_description
         search_results.append(entity_data)
     return {"results": search_results}
+
+#####################################
+# 1. Deleting Data from Tables
+#####################################
+@app.delete("/admin/delete_data")
+def delete_data(current_user: dict = Depends(get_current_active_user)):
+    """
+    Deletes all data from existing tables (raw_data and companies).
+    Skips tables that don't exist.
+    """
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Check if tables exist before truncating
+            cur.execute("""
+                SELECT table_name 
+                FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name IN ('raw_data', 'companies');
+            """)
+            existing_tables = [row[0] for row in cur.fetchall()]
+            
+            if existing_tables:
+                # Build TRUNCATE query only for existing tables
+                tables_to_truncate = ', '.join(existing_tables)
+                cur.execute(f"TRUNCATE TABLE {tables_to_truncate} RESTART IDENTITY;")
+                conn.commit()
+                return {"message": f"Data deleted successfully from tables: {tables_to_truncate}"}
+            else:
+                return {"message": "No tables found to delete data from"}
+
+#####################################
+# 2. Dropping Tables and Databases
+#####################################
+@app.delete("/admin/delete_tables")
+def delete_tables(current_user: dict = Depends(get_current_active_user)):
+    """
+    Drops the raw_data and normalized tables from the database.
+    """
+    # Получаем имя нормализованной таблицы из конфигурации
+    local_config = load_entity_config()
+    normalized_table = get_normalized_table_name(local_config.entity_name)
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DROP TABLE IF EXISTS raw_data CASCADE;")
+            cur.execute(f"DROP TABLE IF EXISTS {normalized_table} CASCADE;")
+            conn.commit()
+    return {"message": f"Tables raw_data and {normalized_table} dropped successfully"}
+
+@app.delete("/admin/delete_database")
+def delete_database(current_user: dict = Depends(get_current_active_user)):
+    """
+    Deletes the database if necessary.
+    WARNING: This is a destructive operation!
+    """
+    conn = get_super_db_connection()
+    try:
+        # Set autocommit to True to execute DROP DATABASE
+        conn.set_session(autocommit=True)
+        
+        with conn.cursor() as cur:
+            # Terminate all connections to the target database
+            cur.execute("""
+                SELECT pg_terminate_backend(pid)
+                FROM pg_stat_activity
+                WHERE datname = %s AND pid <> pg_backend_pid();
+            """, (POSTGRES_DB,))
+            # Drop the database
+            cur.execute(f"DROP DATABASE IF EXISTS {POSTGRES_DB}")
+    finally:
+        conn.close()
+    
+    return {"message": f"Database {POSTGRES_DB} deleted successfully"}
+
+#####################################
+# 3. Creating Tables and Databases Based on Configuration
+#####################################
+@app.post("/admin/create_database")
+def create_database(current_user: dict = Depends(get_current_active_user)):
+    """
+    Creates the database if it does not exist.
+    """
+    conn = get_super_db_connection()
+    try:
+        # Set autocommit to True to execute CREATE DATABASE
+        conn.set_session(autocommit=True)
+        
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (POSTGRES_DB,))
+            if not cur.fetchone():
+                cur.execute(
+                    f"CREATE DATABASE {POSTGRES_DB} "
+                    f"OWNER {POSTGRES_USER} ENCODING 'UTF8'"
+                )
+    finally:
+        conn.close()
+    
+    return {"message": f"Database {POSTGRES_DB} created successfully (if it did not exist)"}
+
+@app.post("/admin/create_tables")
+def create_tables(current_user: dict = Depends(get_current_active_user)):
+    """
+    Creates the raw_data and normalized data tables based on the configuration.
+    First creates the pgvector extension if needed.
+    """
+    # Создание расширения pgvector и таблицы raw_data (фиксированная схема)
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS raw_data (
+                    id SERIAL PRIMARY KEY,
+                    source TEXT NOT NULL,
+                    entity_id TEXT NOT NULL,
+                    data JSONB NOT NULL,
+                    created_at TIMESTAMP DEFAULT NOW()
+                );
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_raw_data_entity_id ON raw_data (entity_id);")
+            conn.commit()
+
+    # Генерация SQL для создания нормализованной таблицы на основе конфигурации
+    local_config = load_entity_config()
+    normalized_table = get_normalized_table_name(local_config.entity_name)
+    columns = ["entity_id TEXT"]  # обязательное поле идентификатора
+    for field_name in local_config.fields.keys():
+        columns.append(f"{field_name} TEXT")
+    if local_config.vector_settings:
+        # Фиксированная размерность для модели text-embedding-ada-002, можно параметризовать
+        columns.append("vector VECTOR(1536)")
+    create_table_sql = f"""
+        CREATE TABLE IF NOT EXISTS {normalized_table} (
+            id SERIAL PRIMARY KEY,
+            {', '.join(columns)}
+        );
+    """
+    index_entity_sql = f"CREATE INDEX IF NOT EXISTS idx_{normalized_table}_entity_id ON {normalized_table} (entity_id);"
+    index_vector_sql = ""
+    if local_config.vector_settings:
+        index_vector_sql = f"CREATE INDEX IF NOT EXISTS idx_{normalized_table}_vector ON {normalized_table} USING ivfflat (vector);"
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(create_table_sql)
+            cur.execute(index_entity_sql)
+            if index_vector_sql:
+                cur.execute(index_vector_sql)
+            conn.commit()
+
+    return {"message": "Tables created successfully based on configuration"}

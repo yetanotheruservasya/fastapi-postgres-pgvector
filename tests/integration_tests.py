@@ -60,7 +60,7 @@ def store_data(auth_token, companies_data):
 
         payload = {
             "source": "linkedin",
-            "company_id": company_id,
+            "entity_id": company_id,  # Changed from company_id to entity_id
             "data": company
         }
 
